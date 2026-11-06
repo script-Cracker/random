@@ -1,0 +1,546 @@
+name: Universal iOS Game & App .IPA Builder
+on:
+workflow_dispatch:
+inputs:
+app_name:
+description: "App Display Name on iPhone Home Screen"
+required: false
+default: "Cyber Arcade"
+bundle_id:
+description: "App Bundle ID (e.g. com.cyberwing.flappyremix)"
+required: false
+default: "com.cyberwing.flappyremix"
+orientation:
+description: "Screen Orientation (portrait, landscape, or all)"
+required: false
+default: "all"
+push:
+branches: [ main, master ]
+jobs:
+build-ipa:
+runs-on: macos-latest
+env:
+INPUT_APP_NAME: ${{ github.event.inputs.app_name || 'Cyber Arcade' }}
+INPUT_BUNDLE_ID: ${{ github.event.inputs.bundle_id || 'com.cyberwing.flappyremix' }}
+INPUT_ORIENTATION: ${{ github.event.inputs.orientation || 'all' }}
+steps:
+- name: Checkout Repository
+uses: actions/checkout@v4
+- name: Assemble Universal iOS Project (Native Swift / SpriteKit / 3-in-1 Arcade)
+run: |
+python3 - << 'PYEOF'
+import base64
+import glob
+import json
+import os
+import plistlib
+import re
+import shutil
+import struct
+import subprocess
+import zlib
+app_name = os.environ.get("INPUT_APP_NAME", "Cyber Arcade").strip() or "Cyber Arcade"
+bundle_id = os.environ.get("INPUT_BUNDLE_ID", "com.cyberwing.flappyremix").strip() or "com.cyberwing.flappyremix"
+orientation_mode = os.environ.get("INPUT_ORIENTATION", "all").strip().lower()
+target_name = re.sub(r"[^A-Za-z0-9]", "", app_name) or "UniversalGameApp"
+if target_name[0].isdigit():
+target_name = "App" + target_name
+build_dir = os.path.abspath("_ios_build_workspace")
+if os.path.exists(build_dir):
+shutil.rmtree(build_dir)
+os.makedirs(build_dir, exist_ok=True)
+web_bundle_dir = os.path.join(build_dir, "WebBundle")
+os.makedirs(web_bundle_dir, exist_ok=True)
+repo_swift_files = []
+repo_web_files = []
+user_icon_file = None
+for root, dirs, files in os.walk("."):
+dirs[:] = [
+d for d in dirs
+if not d.startswith(".")
+and d not in ("_ios_build_workspace", "Payload", "build", "FlappyRemix_Xcode_IPA")
+]
+for f in files:
+if f.startswith("."):
+continue
+full_p = os.path.join(root, f)
+low = f.lower()
+if low in ("icon.png", "icon.jpg", "icon.jpeg", "appicon.png") and user_icon_file is None:
+user_icon_file = full_p
+elif low.endswith(".swift"):
+repo_swift_files.append(full_p)
+elif low.endswith((".html", ".htm", ".css", ".js", ".wasm", ".json", ".mp3", ".wav", ".ogg", ".png", ".jpg", ".jpeg", ".svg", ".glb", ".gltf")):
+repo_web_files.append(full_p)
+has_custom_swift = len(repo_swift_files) > 0
+has_custom_html = any(f.lower().endswith((".html", ".htm")) for f in repo_web_files)
+print(f"[Universal IPA Builder] Target: {target_name} ({app_name}) | Bundle ID: {bundle_id}")
+print(f"[Universal IPA Builder] Custom Swift: {has_custom_swift} | Custom HTML: {has_custom_html}")
+if has_custom_swift:
+for sf in repo_swift_files:
+shutil.copy2(sf, os.path.join(build_dir, os.path.basename(sf)))
+if has_custom_html:
+for wf in repo_web_files:
+rel = os.path.relpath(wf, ".")
+dest = os.path.join(web_bundle_dir, rel)
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+shutil.copy2(wf, dest)
+else:
+if has_custom_html:
+for wf in repo_web_files:
+rel = os.path.relpath(wf, ".")
+dest = os.path.join(web_bundle_dir, rel)
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+shutil.copy2(wf, dest)
+index_candidate = os.path.join(web_bundle_dir, "index.html")
+if not os.path.exists(index_candidate):
+htmls = [f for f in repo_web_files if f.lower().endswith((".html", ".htm"))]
+shutil.copy2(htmls[0], index_candidate)
+else:
+b64_arcade = """
+eNq9fdtuI8mV4Ht9RZQaNskWyeJdlFSSIanUVbJVJUFUdbu30DCSZFLMLpJJZyYl0e0C5mHXO5iHbWDh3Vl4sfAMsIaBeRs/LLwP
++zP9AzOfsOeciMyMWyZJSe22u5WMjMuJEyfOPSJfPn91cXL99eUpG0fTyeGzl/iHTZzZzcGWO9vCAtcZHj5j7OXUjRw2GDtB6EYH
+W++vv6h0t9iL9NXMmboHW7eeezf3g2iLDfxZ5M6g6p03jMYHQ/fWG7gV+lFm3syLPGdSCQfOxD2oV2tlNnXuveliKhctQjeg304f
+imZ+mcXdV0ZedDDwb93AAoMzn0/cytTve/Dnzu1XoKAycObYiwTX0g3XbRxGTrQIK30HwImWSi/9iTP4WIkCZxZOFgMoWrfPyIuU
+jk6WfTdgR8HAGbpxH1TnkN5UvvJmN+L1HmtWvFmlzi4Dn51dHr18wStiE4IPnxjbC3w/Yt/RM2OVSuiM3Erkz/eYO7st0i8ncB3o
+CpYUX5RZvTW/L+2rLfp+FPlTeyP+Dto1knaf6L+fJ+P2/ftK6P0GoN+D52AIU4GieIypE9x4sz1WiwvmznBIdZMSTgXuxB1Ee2zm
+z9wEPkDlRy+qrKwQ+YvBGChgMvEXWVWceWXs3Ywn8G9UGfgTP9hjtKpzmO4skueGe6QMcxkuk0kSWe+xeq32k7jnsYtdqWVIsKOJ
+f7fHxt5w6M7i8j7Q0E3gL2bDPfZZbafWqbfiVyOgj8rImXqT5R6rcEoKl2HkAtaPJ97s41tn0KPfX0DNMtvqfUFk8coL5xNnuQUl
+Z0BhATyEMBvAU+CN4s7FPD8bdUfOaBCXcnQ5g8jzZzK2+Ow/AxiSec/90OPVRt69O4x7IOKQlnDIgYFaEzdZenyuDL3AFQMBMIvp
+apSINQC2BNvlO51qYJEHxVsnKKbkXmLbrAPkSUTKuvAvPtjGCW76TrFeB3IG5tOEv7XqbjvZDgnx8u1Qh45Cf+INebNmq8wa2LbR
+7GLDRreUO3sHKG1W8WDdQoDaxSWKX327CCNvtKwI1rDHgAaBdfbd6M5NaebGgY3cSSfyG9iSQ/d+jzVqMqKqfSDiYYKoTWHRRyFy
+vBOkvVurKeWwzYE31Ztp9YkbRbg5YQK0PJVatdZwpzbkAy27wF9vAmfoAQjF3drQvSmzzzo7bne0Cw9ud2eXHjquu9PfKelbOO2s
+Mph4AHbk3kfGPocyEB6TSeYeh808BlQQzC6S/13gzBWMRs5Ngk953rUMNHVrJndDUpTQKmgL574IFYQb9Nmo75TZTg0JbZcIrVEy
+tnPN6afbmfdtEKzeT6tdWokspWeBjfFiWAlwoo+jsXY8ZdHtHIZ9XI+tFIkJ2tucA2SgfTePLbQRU2XWahBbaJRWoLfeAjZQ70CL
+erelMQSZaOqriYbKgad5DvydLabAwQdAuE5/MYENAwWhgjkP+EalH81M5ghkpcxx/dk3gU5awNzauw+cfbNtUKnbgI1deyBOBosg
+xF7mvpcuvIaAPRRhty77jm/ykR8A2yb1sghzaJX2RYOp480sEi1wJw62l+UVALefLfLt4p0PMnBmt05oUnR/4g8+7m+iRggxPAHQ
+3iyGFsCdPqzEInJTeQ67QZZ5E3ckS+eAj/AYaZ2zF8UKVdxbKA5V7SuRWXVFZn0WDvzAvQbuY+Oz7dpqcYTCpJKgzuCP9E+CHuRy
+4dgZ4sLV4H911BGsQr3bLj1sU34W+U4YKTPimi/XxyVWNYWyBPCuNlOxPxqr94cueEHutlO5S1OWNsViPnfBsghdHVNc1GZgqs5l
+GEdVrUz/kxUmGkDQpI+AREvkgypi5v6dGyzml8Duw3x+TxSIwniPpSLZoi3lKzAy2g2ZcwdKxPDGNTlnM59z7u7aF2oNRrZK0ORw
+2s+a3f5w1DX4am3UGCkqexUZE+BzDV6ha+4GeABdC7k6bYdaSa43DPw5qgsRgtmfLIKiZBaqetqKqo/WmDUWFC9jvWXTl9s6/67A
+yM4i8lU9h1g6CJMEOORk7Lk3RYcEcIFYnFQHTjDMswynzn1FFLdatTydAzENZMCZj2GKrLRBWlKDe4XFNRtZLK6hy/aEyhs1i0JV
+l7bWA+QG7U55m8T+AAP9iFTuM7Hq3rtryIR8W0QSDubA4aJvHVaCPG6/23Ka/a5dEIEapPQdcqxUJk7fnTzUpljJzC2yoGPOe9Af
+tt26xiZjY7e9YpXXMVnFnG+cKZjlwHdMbn8TeIkLAZ/BAJnCGzDGONWEqJTNXScqomI5Ckp2Jq8NZHLzbq7xJS/q5ty52lb35A5s
+rW4bXQptbNEx9WAV8bSaxOp0LmZVeTeWN7JQdsDEqlXr7dCKtypXnyv4O/Xm5Vjs9WabTHaadweFRAN5C2Gq2SiV7XYnvNE5TqJ9
+kOmfr73pnA1ZvJ2zNUvqNJHAWo8hwsYaRDgY++j2tppj3VylYgMy7LZ/XDpEe2EFFa4mqxQTMWFN/aGdsGwE1GhlUUmjMWy67ko2
+bgwffpTMvtVulszxuV9qzfFn8mbaaOuq/QzdcGDrZ7faXiWSZA24rmvAgQevlwq9WjSYVPw3s+nXeKXafuv4/mqdfmcI2/iz4W6r
+447goV7r73brBu3W2rVWvW5jia3NFQOQj01JPtoJXuU7yHRQP7LzvnYpC8n5Lopu4qKoYgQqrCA/emqx2c1hM7vcFd7oaF6fdP3r
+G62/pq+2gSd12pwvKSwpSwhKyKhM+qAxGbqSuXn0XaB0cutonTTqRidIKcqmaSRV8u1/MdLI9yNbqCKORBgxC650YdiiG4ct1o1W
+dHQmFe/y3FBFO9/w4kp6bXWoYegOPiqsQ3OZpWSD05Z73JB3rOMMWXuDP7GxqTsc8jyVMcLy2UAnZQNQtzKaOPON9LGUjTbanabb
+z+We0kBDJxxvNlDCpncGTccdlvJUN22gKiwDBuhT/iZcRnsUm0jbvHwhQtwvX/DchJcYiaXY99C7Zd6Q4u1bPAT+kscJD0WXVGMw
+ccLwYIviYlvxG4ycz53Z4Q9/+Gd28vXx6RU7ujo5enUKo2GxWivuInJutg6blbN3GIq/ulDrvnwBg9kGTgIm8uDSe4x8bDGa5MEW
+x9xno8Gw2Rrubx3+8D/+k4ABJwpdHbshdFQTYyuDru5WKNjQ7T/+vdrtCVBrmN1vfwEsileGBXzjT90tFi3n0DN/sxWPGvvi4TXa
+7gdbr1EBerPobx3++x+//6eXL3j9zK4vnUW4dt+88uEP3/91Zb9vF9Ha3R4thp6P8P7+H/R+JbxwckRa4z8pqoCjJSkxSSMRC8CX
+aFyd0M8tQDJ/IXqQCFr4+hMQuS9Kpx+smXjOae1MYsA6iS966zCriuyV1WqJHzqIU3e2uOBuxgRM4XbMoHN0rEiv+Ev5t1k9Tprh
+RNq/pl+HX5wfXV5+zbdt5auzd6/Z1enbs19qc7P2FwIhcvDBFulBj4SVt/4tJttAPZDbN6BIhWV2OYZf7BVwqjI79sOQvQpAIIXs
+p6zFLhFblcU8NIZUkbV6kopDaEutF7OoepWdjH0foOHZQAy3lM6nZG6l7Xnu0gfGxb5YgKWGrUN2vPAmUeVsZutnBSITh85WQtE9
+SsbxA3MGYheqG2/oRA65GQ62ULjNUwpKfDiSLwJ34r/8P/YF1WRX7tS7N7f7msOFY1LOjPFwjD/8HetFTjBCVu0GDx6iH7jOx4wh
+/vyvjKd9HfNK9kHWpCrCPsffxRypKOxxatp6HL01qoyvJ8c1ewtbZQNyi0XMZeC/9XEwUNlqb37zEEIjj026X1/D700oDNscbAU4
+iWQ1JP+M5JUwetVYR2rLb3GNgRZRkKIxh4zmaMJvHaYchZjJJWe8obWbB9AgnzNoaregSllmvclMQQD+R/aadwXbz5tvOtdrUFwj
+n53NQC5EcU9PO9MxvAgeP88/sTfYEbteBH1/02nWQV+9Z725C8rsNmvcs4ug/8QLSsN6g0dP9L/933/76/dgxtWb7IR3uelkLxeB
+C5QfBT67WkzcTeb5N5GWzYR7vXMBoydjnGW4Pv8SGU9bh0cgK9/PMFvDHT6SeaHncVPmhW0AKGQ0OcwLa21AAdnmwPeCpyHSnop0
++RTmY9+dWTnwwwEf9XcbzYEAvOdPnADVg8B9asidWeRPnxTyQa3bGsWQf+l7Q/Z64kWD8dNCHuD+fFqMO4NBvS3gvnjNLr17d/LE
+e1+12FAXizJMNsmjunV4fvT+3ckb9vro7SkrXh9dshesd3l0clqyGIVrGDZoxGQYNsxuh8n2TYw2yaMp3EWG6SPMqKEzOZ3633pJ
+09TZ1URfLRnOvzPxt67xdHj1/h07uXh7eX56fbqRjTQIQFe5cp0QVcoTkP9zEHAOw7T5yq0/iZwbl82QyYIBPVx4UXVdxTVm54mP
+26KxGmSlNUR/8NZh7+Ti6tROhnr9W2eylSxwD83mTHZYs6HJjrn1wDw+7V0/AEry9WR5hp4eyIt373sPgBL0ut/g0ZoMOboWnBmE
+IrqMPbbksCWHK98Yz2xMUbAPVFGWa7CPZNeh67qBdsv50dfs6PXR2bsMTqY5ltzZYqVjSR6jvi+5s8nxDboG+R7Zm/fHtjF1p42F
+ifFHdEHF7igehUiqqUBf44kPNKgzIE8c+7H/2fCboklu95XGVuk5V9LQWQMc+efv317q/lLNtWYBEY2ldUBEh7LNtZsNIbYQEF6+
+OeqdsldHvTeseHV69OrrUh6gL1+kmE2p9mU4CLx5xKsUR4sZKaqsWEpDI3FZFHg3N27wxgGbfVAkykhrYWB9Kf1izBux4p03G/p3
+VZ5Px376U6YUVKduGAIvfuPMhhM3CFdWqI5p7JIyDlurTXXuh9Fb/krAvi918il5/sQGDqg1rIiTi4s/PUviA7Mwgl0BTJgdSGDc
+uFHxY5kN3ZEKnI6UuIdbaA0aujPpQVcAUhU6OIvcabFAivOvHHKY/aoAZtlHBVDGQEVaBDPo4fnBAZuhY+xn7Oe9i3fVOZ54LN6W
+2B7CocxOnlPcAdaR511OHkM+mVvLVFSgw2ygyxymEIhmduONlgAXBodsyE2x/2k/wTPuFUb+7N5yFo0lSAiBwQK9dkUNwrEXVgfR
+PeN42ddfTRcR6AEHfPkQ48UCFRXKbORMQpkiUtgWZElpIyFtP4+HK1lX+OgERhKUSfM4wSjcfcR++1uVYOWX6krjKEcnJWVe7h30
+XMygXd4kqQ7bKX6mIDKQLJBMIVyEc3c2hHnrkCe1AzdcTN2sYdInYC5ucVQH/DWA+BdBmVheGSSdN/vSmZhIS9ehJOjQWKUY4fvZ
++La0zNhnEeAsmdVgEeDpqWtv6u5b6vrhQKkduICyi3DgTSYOEZut0Y3Z5DVMXq8MfVcRNVgb/wARFEJv5hbMaqPA/fXCnQ2WuL0A
+iQv3iEAmPEelvAbu/RwWZIYHlq+c6fzal5u/daJxdercFxttXK8SdAYbFRZN6/KmiqunDy5WFAGvVetNExLRLBeEWrVWq2eNi1MB
+nM7cQVS8MTqP3yS4HoKK6c0clEyWjkK0wYqR9Y0/L9ogWMGbMEfAmRe9GbJFvuRE/VAADLjdqAHbbXRreGIcCxodLGjv1jBvAeZc
+iDAB42biFqggPdNDYX+M3xTVfrvYV6NB7Ws70EHo3EUgwMfUQa2rdND3QUi7Wg+tFjTudHgPXezh1wsnEADUlfaoVGit6zj+Lh+/
+3tXHrzeV9hTM0zpodwFqmgUnGE7vltkPfNwvStsdPItVr++0OawG+tTRRQxQ66OJR8F2+QI0GkYXHXUCY8+dDCm4oXXTQRTUW7yb
+loEHdR3I8NThqEHbNs2k2dHbN6TmupIxShh+IgaRrSiV3l68Ou0pmghFDfYAAnSG7LGC5PEvoIISDqDwwXFD6CJEdzHmbdbKIuGm
+BdOaUo94SnUB/B/pKX4WqxPGv0d05JUErqx0CM+/BLnswE9BPwXDbckiZw4zhUcMRoimMNLECfBhMX8B8nX2PIUWDyXE4HYaKbgE
+xjrw4rMMLrnvJWAlL3wKK/evo09mwN2xia/9lb/oT1zGdRv0uj+XMYvJshzWdu0JUCt88BK0sh89BfcCFHxgqZM4YjkfL+F9yPBY
+Np2aZ3Nv7oYKVhNIMUPLilXxI4VVFCjAmgogkXfvF2fvVPImTRNngrk0ALNIqgWY7mjogshyhYIbOuBYEElFUBAFjjfZYx+kRkn1
+b2SECc+vPAx33ErDcL+iNMyo1Ry1XWWYpFHyVhuG3LTyME633R7tSMM0W8Pmrjybbr89GHWUYZJGSXVlGPKpKnOJQU/mQv9Ig7hO
+v1nrqnOJGyXT+iZz2UTayAEb+gPQI2cRKtunExcfj5dnw2IhzSYpSLlX1Jb0XN4DNhOacbHQGOpV43yVvIHiOgWdc4qMpLy2ooo+
+bJx0tKIp1dHbxmdhc5qKKnrL9KRpTtukkt46PdWZ0zqppLdWjj7mdCDXMxAu5d3k9SFV08GQHNx5PUjVzKXjqTj5S8fr6G2lxJtc
++NNqeg+2lIe8rmz1DbQmTuFVKKFKNpSu2gZxHVtb7kJd1ZrXMnZ66qXP60CqZixJEoPIp6i4loE8kRKY11pU0YeOM/5WNKU6lraY
+1beiKVaxtKTo0oqmVMfSllzLK9pSHRvEsC9XQQxVLC0Tn+2K5km9rD5QN12nD6xn23vkNl214aiS3jpxuua1TipJZDZxIxHxpnRS
+xfeUlqNU5Zs9HZhcHh/iYrQbeAYYPopMrcI3VW82mCxAfSumnZVK6ohxFwpMyKV+4S41ZxgUYvdkQmiQkKHxQTT7piR1IKpLKewM
+Y7lG71iIvZMGp/VOet4H0Qx6TzsQ1RXg+8CMQrVzKoLev4vtHzROYosCnoW6Dk+JMgzPAqX0LHCKZ2Q+leTJDISsl0ajIrTf1IUW
+PjYwr07fvVcQQieT4E2zI6f6iyszoLyjHAFAu4wcJvCmpo4gGH1NBXDa96GwLhfexIxZqRqOYY56Yf+mNwj8yUQZ7cWL2ApAZ07k
+uaG6Jb0AlZjvGKAaLSvAcgNt5FuObjxBg/bWKw+fyozsbnrDVc4aNw6uk6eTV/TozW4XkxmtgaaB3NFo3ExPTIjBGExUn1pOnZsZ
+3QdQJrk0DGADKP3gTMl8gY4+fCOX+mB+GYVDbvzqxXNgrN5gYnmDHieztL/wJniSxFJ/7tzNrnWcS3mcdsQDBuYx4slFAwhvoY8H
+GgJt/lKUItrBKh95oA4SUmb+rSOQPAazqwkr4Tpzf3Z+C+p9XUVTfzGBPybI7gz2lmsvX/as81GSRu0zwrM2pJGlcwIbZBegx7N8
+rTL3UhDsGpgOV0c1jAfe4GNcrIewAheDl4oznwOBp/6hTWwt4DY/xiMksHQnEzw6coXOR8lfKOTCPIBW3LPqzeJwF79BkhJNrtBB
+iU5TPMQkNY8ZQuKUJS8RQlGlV1LVhEmkdRtxXf5OBovbTUr3o4nvB0Ve9DmCbNZXx+ANRJnRAoMJbnQdH/8pwusykhXu5PhRqo+c
+onovY6mOjrlkMjuNMotho0sdpLYoG6TABbFVNaZAvaOcSKBNz+Aknr05jZ8OYr4Xmye7FifS7H5SFyBeGNobwJYIlim9fDIoUakm
+TclkI3haLGBFpG2Pthf8eclgkszb3laxQY2r80U4LtJmIiTj6SF/CoN8zsSdpkvzDUcf8Q39Vb3aYds4W5CX5ttGC17WZZkpI8PO
+/oTYupcFEV1mB2ygCMUvBY63kRuoM+TbDoVBEwfWoWnX9o3KuA9aNUvlel2pncAqIXBwD8QJjEiZHkPQt4EQWIU1zFmba012dXEa
+3pT5+TIlah7b3FX0cpzwk3oAMdTet1SiyHWVekEvCf3FWJI4LFHIbhPfawT7qC5VA1nmBKhr+IuoSG2qv5IZSlyECpAbxRUBfweH
+6OXOHqRW2GefyqAc1HJ2gYjIoXUJ6p6yEUSUWlZlD1Jllv0s0UD3pDrZI4XL2eD9mTKCcO9oiO9RxLpICuUHHb5vKP4lM2fh57F3
+QnqizAu5VadVDkf3IjT9M1b49z/+/j8XYE748A8FpSnZknrblDteHr3vnb5CzBR++O//59/++j1188P3f02VZ5YaL79eAOeJT78c
+TSbFwmfyeZj0co1CqQr859QZjIt9WnR5y1RJmz73EIv+Deh4sVVDR0pAQ+6jJD2KAB19mCHaSOK4CfBxhFoyW6SdVJIgRhmQQQQq
+a4j9NhqGChmHrpTIq+S00Zqrdg9GHQdyQ5uLRkIKGCOgjRYLPP2yUNKbkrmYPyK6yXFNvzg/u2Svr46+PLv+mlZWyk8qGLFyHWxQ
+sfVgv2wtSyCDoINlEkdcC1oANTFxdSRTEtLFF18U1Iiqi879tYaNMbXpyKQAcAuCvQR5gqgy86IIYScXF+e4/EVMUJHaAel+gdGN
+Yh1PshfCUiErM4imYyPI2DZfjyLfnV68Y73ro6svzl6/uT692mPHF70eu3rfe7MmVRZeBc4NGC4UB8NLT17wi00jHziC6wZVdrSI
+/Moc0Dt1UMmbAXnC5N6BFcCOwV58XtiAiokkNiHhwvHFRe8aiPPVxavXp8pQD1r+rMUn3Y1bNsniv7v48gjw+fZYWXsqpYWX2uQt
+vIV2s5aTn8I+htF+gWt58eXp1aursy9P113L3sQbumCqzW7ARBJrGi9krHiy3hSdXyHFC4WJ81NuQ7LpYhJ5FbKGfuRlFQnrL9jl
++/Pej7iuYtLC8EuW9u378+uzyvHR+fnx+6veNS0sPfGVVVvlLu56AjE+uiffyfNAcShca1ZxSO+4OBQMW5OF68Aan9R5AliFo84K
+K73jsAofnRVWu/4ljgwe482VocUIn3gUiJANhbWlP1ac31W5g6hEXXE9vqBchBBfnIlnE/7nP+ORst6bs9PzVyJxtmBknUGf3MvE
+DkHxW6PfH77/V+yWCDJuq9Ni3mjckbXuaP/+xz//JR6Lt9xkrMRTtv5wv/8Ta/wyHjFpv8agG0vPNVD9v/53uoK9PZaw9/EcobDO
+fI1e8Zjs0bt3IKPPvzxPO038ZRl950ww9tdvPME//AtDdifmRiy+OnFnN2QcP3SCdJr7+Ors5BdxvyRP8js2sq0oyFv1ZjM3eHP9
+9hzzmXHkbzGZq1DI4QT9RQDWMBjWyzKbkUUcYkLJUEaOzeMxszg8ON9wYu+SZNzT78sz9FCYLgHMvi7Wqk2LU6BW3cE/RQCI3HbN
+Wkn1Awn/b+IkoHncxs6WgR8WHezglvvCqTAElMSFE2/k8oti6EMy8eOA7hsNP3jsJ/QgFuMbq1/F7k0STtZjWkyFuyouURUTOBa8
+2NHLA/8Oy9t6OchYDFfoxX30yAgXY4UqAQqp721WL5VAY8AfRit0zTRq5hh0DRLCK2XVqNk0aTJKkiCTZPXYPGcBp6MA6AinBk86
+KSVVB7zqAKoS0GygV40xKmhAO3MEa4oI2IYeAAmAGdJMSmWtGhDHTgPeBVRrnFHrbg9wqxeOoXBsFM73cJYHXFdqMIy7aFXE5UYC
+vx8CoDXxHJOb0uDTivRvi5DHuPPVYqZ6NEf3lpxu9TAJxui9xVRmOEaoi5mBLmYJczEzyMWMsM3m+oXV0dza12vcLtWBRTEGwlTA
+xQsKjFmbUHws8w1oxbZXPH6mv0r0InhBkTPtpVBwzFZCFzFfpIqD/s6IsFHetR5hI23WjLDR6iVxpGrjEdrD07j9qZa06hXW6Rrv
+xxiQaxrFqb6gLTy9pcicjj3ZntWX1xKTw39sMblMlGuBumoz195dFfNIatwp0Z16TQnodEuWFrFlp08yjuiR810alGIWyRpgTjdK
+3PquiDhXGh0e8+yyT8qELXLRagUmeXO6xVuTrEaLCbMvx2147B9PYZ69ey21kzLaVlvfUvLa6soiVXAth2PsAF/TtqLDDjlanDsb
+IqMPKC9LC2BxROCxdvSFyBgc4RkZSpHPlARuEPiBArhg5/hZLV2B4DkiupdeCyCSIDlkwqWPbYQbX+Pw0usDThHK3qT0j1BONqG/
+Vh05ybezxwWoc23RV4UiJLjVhjy5zt6Ui0c5epsm02kt+ErKVBtnzelON45PYHltHrD4r/8FPTFJcaPGi7//nVJcF8V/4uENsLLk
+uIRJyRvtj/XJ3qRkTukSKaRR5+cH0oY2j52trTyIbEXDua+b5FPy9hvKZqJBfH7AKvV98yVpHVI14IxttRruPJpoWuslq5VWe+uT
+7ivNVi2jT/3wpHokUdvf9N1C1WTlFqFIFKjQLbFc3SqzTpmpuWFVykgvgwx4jG8hB/TV4Gqqg5TCUZZTQbgt1KQ0M9JFtllRtTZf
+omiDXVFpt/GsWLtUeow7gXsHVIcf64vFo4GdfljEAh7Vr7X3NRUfsRKfJFvH6oxPjf2IOycrmIWMUFaGD8HqkYuuuUfLPCiq6tag
+nmSr181qbQ39HpE21ESaQUVj17ldqlTEkwKQD7I0XvWc7Fh+nUf2Hkm3B+Z4WY+zlNNTHd+UKY1CgdnQBTbeQbTUkrqagW5Vo21p
+2vUDUZdoBDULQkEe/YlRuOf07SU7Pj/qXXOs8ns9tEiH7GcSqnTsBwNGhI6nQ+6AqlTsx7zdtOEH7xuNN9OaubhgLq1WK2+1uEsD
+V2u3pgU/uRDdhpFgf4YhnjfF06ZqpRj8cD7xYAd70FEmT87SdzP0kw0pxs6fyOesqv8ZRGMYCe2qseWSM58P3nVpNCkN2eXsP+Ku
+5PBRsP6d8PdwS6lCX0GSbRVMb0NbpdKoJ8bKTmKslHP62s7sy9qV1JOxcplWi3Vhs907aDme0E39luhNnnojzsrTrdxfy+Z0q6FX
+ivz5JTkZm4aXcUExRHgVd1QRtY2B6KxBIounVSgox83Jc9MxUjmhIkImht+mPsj2xJsRu0Zt5/5rBZC0esVS/QbFBo2wbfdU07l8
+/m1x7A2rmhDyQ7vQUVU8/vSniXkDejcKQFPBoI8V6B7W1KbfBr1D8pOh+8Z0ayJZ3su0egfqSresbI/Q/XoP5ikXAk5sZW/28L9y
+4RyPHpu5hR0Qz3I1Pxz05sO9GBE/w89U2fL6oBQTndWWR9O51DKhjRbw5KKMdVrFZrukdzEHW8NNUs+lF84kis2cn6CVA0vRzk5l
+msaci267MZer0bGZDqD8DskxUuCOPDpHQV47fOJuOnxK/HIFwxkkZTXOkbk0dom5wOpQsnizTIPs8aE+SHnAOnqpghCSJRBXc/XI
+hNWQyAXAVIwruJEoDBNvq2a3RHDuxmDSGYyCbXQd3+leiT0BtfTHT4B1ks9cxTr3Tdr8+zH09WZbZd4wlYwNrpCX2ohjXilCvp5h
+J9SBJit17HK3/czup8/zzbtzfqKjOIyekHsrOb3zO7AsKf9T8zN/WEWuieHyUc9U4LHqDx+/4eqCuhz8hWSEAQ/lZRU21K//SKHD
+4/IZwQ3NeyTalOxyVKmq2SOW+EFiWsjgym8MoLPFszSm8PrTmGoYwBhHvBHj6KK3hx/ywPwbOekBCA/Ir8voygedKDBMesBAdLVj
+wkemip/J4fvrc9aoYgDwcxBadGkAPIlhPpcwdi0GgsptPpAMnXRAqZg8b9PY/MwAHlIAmv4Jl2lySxwAjxyh8jzEqE29s29ftOuc
+NbvOWrJrc8XywkCWaI+FWaYXCwmHECBmp43Xyex2aojKxIdjHzeBtNKuyy6JduJYuUWee8OxZgK/RGTF9bCOGUCPjkgRSUcCCmlL
+Q6F3oSyQC528YK26CrllWI4cGLpIvVekUpLqNQ2WT5bdt4yboXurXjMNEIFQ4P+qI0xjK1o2kR7izQ2o5Qb91JUCu9z6Mtm/9apR
+AY0f5bYao0K+wq+YynIKFOsdfXn6in198T7bCsrwErI4HFB44wFxjF3+aU9xvwx+fsjxZpi5Rl/9qhYMgEwbULVXs32ThMZanNAb
+ZDlHjd17u8yMbtvIKu4ftTshCHPzz3QplUsvyURSc0KMBiJ2P9Mf26ztP1uT6HSqqpue3ByaWklRdno6vnj/7iTHpM5fVB0XurOD
+09vZdO4M8OgEEh0lRAbeyIPflCl759y6jLRYg+ZMirOSgIhGV4T0yBFddbC0EtGleMl4Fy8NJVMxp60h8IRqOT+lIV7EktSu8yoe
+LW7OreXPEoZh3EjzZaH7GnDAJa4qEIjwq9w0s2poVbLukLEn1T6XsanpaGiro5I5r5JNGasVmEMlukJpQF2BSZfl4Ep8CafUFfVZ
+4Q9vzDi2iCb6kVR7W6utTVlEK1K+wLiLv5XIlntZFvGX8yqeGWvZpI1FfhH0sVNbZkEEaSkZiFMhJUnHRWKrmzS3hnBbQ7yZDKVh
+VlkpqNbx16kO367l1Wppl8Wfjo57F1fHIPLenF3nibxMoZeyobw7xvtOEHhuULVNzCb3VELW5KBOhs9hT5BjApc+JbKXggQtm5HX
+Nk2gJCMQDwTK3rMkdKSTaIn7305LQvGj8BLuoYohNkslbfJkLFI6S92885SD8JKBYm/SuEmwPMi9vb1vpLvxdLFUAS6Lsm3NNU6o
+AWi2Ldqa5DE+Ob/oneIZrP9w+pzdY+YsdZcVXNAX0p50jeN+fqA78xOPP7y2vNnEdS92Ir+hUZPbK2OdBsHJNFbZQfhJxtiDDlly
+SbhXNhBMw6SVJpmGXDIVuWgCzaZRMkSUMGkSe8YqenByWPEla7eR6+LzoaSFtNsl0YMehMeWRGPj5dyX4thSpI5+LUvxvgzw+lFS
+7xoP5OJPYqDk8e+nMDPEMmcFpMTqRt5M50QrjIwz/CzFwJ2j3tdfAtPlt0xcOlHgT/i1lQ+xMQxiwJPolTbgPnciWUROPs8NSNwX
+bTQC97NVL786T/wabZ0i/So6SnlAjnylJCHU8yW2gObwPs4lQRr2kYaHSXrJkoqWZfwUbXJdBCf7IVUsmdycqgIzbxJh069DQKCx
+ujhRtP4BgBdUDTcyGDnGtHnlJa+8XFk5b41t29ZXtq2vbVuf/mtV4QyMm3OkA+GmpJJyy+KrhfSj47pY0ORInPJtbbCZtBBper55
+ifU6AsPutMzZ1JnBXMt44WIwcMPQHFFHv4iS4EW8MisknUfXBi/Pj3pvj4RSqOmBmgRnacxbWWzu2hajJdnUHTAbEvWBnwo7eXN1
+8e6C9c4vvqq8vdDyEtYbTHjPxWBJhna3WpNm9ue/MFBt2duj1+9O4/QH+vzK2sOkrnkxkpzyvaMMxo+E6TF0fh+FZbiVguOTJYmC
+NiVxHgyKq0kU0mGQ+DJXrKYnURA/zpZFNkn0yeCpJBJawDpzesuPwfR4Oo0WhLGm03yXmUgju7PkNxvFD+K0tAMxdJzSVhFv0uA0
+enTLwn/eUlJzbenxzyyJ7uRA2Teny99afCNKjnxV9tpzliGuTN+3pSRJmfdAyoaoEan0UjxSYIKnHi734nlVKGPnlt8mR/kWeM37
+p9L+et1tP6A7u08sYwSt847WeWsDWJPElbS7OHEFL2HnHdY3m3xGhzn9fVqpVMXjbaBX9dNmmmrV59Tfr97eG3pDX4RBbDEQ8v+Q
+qVBpYMhNwLRSPZSPX1g2hPza3BF8Ml5IV7Mf2GPZ9TYPZmef+UgZB10yjtei434XsTr8PoN6XiNOKrNHwpsNW7g7Tn3ttEpGiLzS
+rBkRcDEn/GYCo3sDn+nn2pIaWKFhxsuT911ywTaVYGQd82rSaGRbAwpJMiv9YFcDFpPv4tEyA/DPHp9cuCq10OWE69oI1+WE62YR
+rksyzCU1touGLhYcsnjRXDJLuyXRObd1pS5evGDHRO9s7EUyEujSRNexWpwJJr7N2MLfCkx8m5VmKW/ib78xjQxJked5eH2RdUmP
+pMLzKXdMpVzbv9/a7FQXT3lVLO4hjlJ4afdNsRgnprstO7GzblbM8nFlmhQbGBXKMRmYIvkkNEEK9pttcpajbhZPMFN0xeurs8vz
+01jtfv/u/OLkF6evNK3RNtI6nt5PdhRvagHl+MzWN4PMBOBklRstXOZaWTvhbCq1qMl2apauV2X75lli/ASz63zcxPGsGfVA1SVJ
+Z362YjvGCgvfkVwnSDcl/Q50Als9xfj4pbkxV7iv1gk82LPM16DDRA/N5AqxI0u+7XWMX3LDVRmMuVuLBDfDb/ag+2ldh5bdyE6c
+2P+EVuib9+fnFPSwXp0hfa0i1zCzG0yGtEEvqjAPtlmztukif1rTrBKnPC1mlS3n/Lu8bHMll0x9uZF9JUKqin3U7uxnabby5R5r
+67XY6FFaraHWcuGJ4RcUldTbAcMbQKFwn/d6wOTjRPdg4ysnhwxm0eeBUgpdJsph2nlSxEdOBqlsOsoyAR2jAN/RbEmepcAvNeCX
+lm5VbeeSX0/MKxhD3i5jHbzPw108RQQWXRQJiKgouaJqzN/eU9X07EBynJpCzu240ssD+VCAVsmuLvmjUUhuIbGgcXu8iaOo9qAb
+dBz3ooPP8TtmRoX0RBmlrbdqZWY7X9YwusaG8xgnFRvPNo+fPSBOhToqnvbGCy8mXoi3n2Uqo8rVN2vqokHS0KqLyuTeD6r38TrG
+xElleOsOLIFKOFimUw4vo+pji+5qjUhxAZ+nsvK3WTqrOGwmwSlO4UuwxEW7oMTAb7pbRDt11qxZFQ/CeJ6yLenFjb+1KvwIddHu
+Ml9fW1xLwc3S6DJTFLJ3laktW5TC3OyDlExjGW/42kiq5Whw+XPOTstT9q0lg3/dM2LWkEJirnz/O/bV0Zen7OT89OgKjBS2Xa8x
++tx4prmSkK6qN25MV7lXV6xAnI4sWbWw4CpWR49AAxVXhobzsRu4IZv4yPDcpT/jKXZDd+TOgM6EDCmsd044cO6shw5WHQjDq+ad
+W9e40YE0c0ORw+oRXks/cSK3mOXTocZllvvaetpU9bljGULLk6itqBcZ8h/piork67Dn3sx18NKGIX5WoFiL7843rvKHhngJwgky
+1h5+tLSGJFdr11r1eiG3HuViFz6rN2r9hptbtU5WZ6debylUjNCOvMmkh5d6o7Px49J8SV9E4LCLe+WTKTyTJDHaOGFmz4Xgpu8U
+G41OudFslFGVqFU7XfmuTttVcPyee07QmbfCheJ+7EBXkLWvCqSn1M2Q7npnobmI4ao1/A0xFF1tW+PWfGzJKCrxlprTNjtaGol0
+AD5M5gD3PKudng7iYxHrGPe4QH33xptdOpF2MBtfOcGAui8T2PRf/skH6b49oxEueDF/jyAnVO55eMgdXaKzxUy70alRxkL1vGaH
+F17J+WF4bCVtVu+UzBzR8CZvM+PQYqwK9U4/4qJtKlJ5y41li9uMb6NitS1diZdblfb4cLfVcUcF69Iku/xmf0NCSOZWFrNdkxBy
+gAAON6h1G/WC3jaMAv+jq/GN+k55pwasY7dMnw4pZJ7tF4wj/cZDJvNQPc6iunG0X9TBzVWMjWZxMgnPIRWTD1jgiZ1t9bdZocL0
+gyAKk+3fl+V0+OoYL+e9w/+MS2YzjqiNGiqKnQ1vciJ5Ds6y0selfOw3uoPFlptt/dJ634++zk7PttbXB5NwAZ2V7CiXKHFYHzW7
+hSwUxxXnVWcS4eVGcSoH3m9kfpAjbjwBnvGV+D5PQ0+8Q15HWDq0WWYKVZA/lTAIK4ptzOQ6lRqoQaUhtcBTuNZW8iCo5ojqPMiM
+yZ/brIue6TWG3KC5mS5La7gmKnBJxdyw2VrY0NpsgI+k5caoWNXy0yYbU8mkzdmZmfmzdi3bVKcpmRVzWFdtGiG9zGoZwiQVJ+Ib
+UisUCrtKkSElPhu5g+GwuWoXZvVjGwGsosgIC61cJykZNGeVMlJA112jOEmq9GDk+2sjX+KSo/pOwymsv0ZroT7u30xj/VkaKCNG
+K5juJmuoUexoZIPe5zdA9v3JkNXr83sWAp4roRt4tupo1R9NvJsZfbPSxQzljFrHTugiCrDi1EMzumATXzfa5EVKI79EjzIXcfqW
+NET6ABClG+oVROog7+LPf9Ffpyl/4kNEf+I39f3j32csLrozijdEMPUH7RQLMe3WOvXdgk1xjO1NIcQ1qxOvYBHnMldojjHx6NVy
+5PIKXRjvHrz2JdhKtr6hhoA4H1CLgmxufXXjq9eCGRUDP0pq8fPU+7bTbOlhaBoTD0ig8VCpl+yn39LTj7/9rZRmG59Yk28l+O6h
+DCnJu+6swZfUhTZOaCbpocQ2mt3+cNRdqZ+11+MruWQdfqz2/eFyA4pyJxNvHro6Ehrl9GBwPXYcPdrgEqkGmxO8DEullUX0CfS7
+OpswK1FXHaPSYOKHrh2U9WbIYxIbmrcdnFWZNavdjT0cGaxtWO9sCsQOB6Je3XmKxQZKxNswHkCJCERDPoybXK1BX4GsAml20ScB
+/6+ALd5+IMosMmPjqwlfvGCvAudO5KmFm21Mu9dAzlhb6TOwpZrqFj0ZA7idKYICBIZr3MoNadKcTnm6xAqA1WTDHIDzbi9cT+eM
+k5tWaFlJ5lPiiuK62yONBfdpjQWTTfzoxkK8sHIq0M/daEMFIE6vEolV+08qjFL1pqIdqpAYeN00ZaW30HY3610lo+kaTP8pGZ0g
+KvSP/G2Yl/2WzIR5UcxvFWOSo6B5fEnKWMjiS4naJGL5edwrIGUzwAAAZgeUeXLCE20wnppwyOriTFut2s13cq6GxrrjeGKPeQWG
+ka+18V5KvUVZuT1lGCZJLrtLnsYrbJcMqs5kT7oL6gHg2EgTw8mrKFMKOa8SmJYctjWVuDVlBeWC94k+HigvrHkIlBwmviuTG65M
+Pxq1ImQ55x8/FLU1nOgYmUfVwYb8bU6RuzlF7pqPCtvZuJ0Z+J/4/rwYhXpG5vMJfjXam7olFj9hhrzxfahhJEfnavxOsSgE8k07
+eMHqtZoslTJ6XCvomxtpVC9QVI5crNZPtZN/RmsthXU/05+o09Ka11TnUhZefsGTRuGvJWuU3i/j90v7e/ywmX6qKUnBFa95vlk6
+hTWSflPkSqv39vTde9v3mdSb/mr7q77f1JYNGryHg05AtdCi2VEa2y8gbLT0iwfNCcS5L/vSh81/vYCtczTzpg7uki8CoJcibhVz
+Jz3uc93RTL1LEwowNHx6Cz3iZzNA8w+KhQGswccC7KySfvOmTM7UOPtb3vgNerFTMj6aknYGY1k/+71+0pb5tTBrJnaKz3RDPeZ7
+r4/FZ/zF+kxkii/BIjIDMMrus3ApviZrfi02KxFxjY9aPB59qz5B+1j0idSQbPSJj9Mi+gZ4I0gW+sQHbs0P2GYe+3ky/AHkaOlF
+OROPP6KXNIc2V24ULNdro8tgf+7O3rqzxZtFv2j9ThMx0/2n+hJPRmX7N7A2+WxPggucTA4qpPnKGHzjT921W6XNLp1F6G5Apdlq
+hvSFsKP3vdNXheQGBfE765IGmwAUTdRu4w+PySrQ3A1g/02d2cCtzvw79dyEgWRl6m9hY20wc9w500VEd4s9T37IH0hL2Re+QaqN
+a+UtvIWkx84MzJNL4HKgTr1FCgKgAMhfmhmmAfAnzNhyZrdOiDzjGEMvoCacUAsyi4yL9gN3ghlkolPQsLAX0LdGUf4XbHK+RGj5
+XFCjZflcEBbi8I/6EpD04b5kNNXg46kHxuhaJXJMGtDoOorArUkpc75AQ/8OuW3R1QjGrc4DF1u8ckfOYqKsg7nCbjVe46fU6dWv
+3GWpm+luU+RJ5gf/WP4OXO/rGyndr0Iw8lAbgjPQQ1+NyCJdFJ6ZRKYiYL01+mTlLdf+YjBGY+ppycZmJuCMpLLkq4Ql6Wu1+z8a
+s00WWGfo2vcVTey8csLxj4qddLuo32CSYAF7CgayQPHRXWZBwE99DkA15cP05s7ALfCLBtLSoyDw797PjXLQx77SNlrelJ5iyTMW
+PcFODo9Q5jn2RtE5yAhjTvTmilRGy3RfPWa6WWuYCSXh3QolgHK0geTSbgxqWj/zulICSR5JpYc86NfGpBV8TdYqdbZXTmOFrJSO
+aarT2WBrBW7o/Qb5OX9IehEN/NnEpwsldP2LVy/mfvF1HdcDf/hU4u1evggHgTePDp+9fIGubvw7jqaTw/8P8br0IA==
+"""
+raw_html = zlib.decompress(base64.b64decode(b64_arcade)).decode("utf-8")
+with open(os.path.join(web_bundle_dir, "index.html"), "w", encoding="utf-8") as f:
+f.write(raw_html)
+swift_host = """import UIKit
+import WebKit
+import AVFoundation
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+var window: UIWindow?
+func application(
+_ application: UIApplication,
+didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+) -> Bool {
+try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+try? AVAudioSession.sharedInstance().setActive(true)
+let window = UIWindow(frame: UIScreen.main.bounds)
+window.backgroundColor = UIColor(red: 7.0/255.0, green: 6.0/255.0, blue: 20.0/255.0, alpha: 1.0)
+window.rootViewController = UniversalGameViewController()
+window.makeKeyAndVisible()
+self.window = window
+return true
+}
+}
+class UniversalGameViewController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, UIScrollViewDelegate {
+private var webView: WKWebView!
+override var prefersStatusBarHidden: Bool { true }
+override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .all }
+override func viewDidLoad() {
+super.viewDidLoad()
+let bg = UIColor(red: 7.0/255.0, green: 6.0/255.0, blue: 20.0/255.0, alpha: 1.0)
+view.backgroundColor = bg
+let userContent = WKUserContentController()
+userContent.add(self, name: "haptic")
+let config = WKWebViewConfiguration()
+config.userContentController = userContent
+config.allowsInlineMediaPlayback = true
+config.mediaTypesRequiringUserActionForPlayback = []
+config.preferences.javaScriptCanOpenWindowsAutomatically = false
+webView = WKWebView(frame: .zero, configuration: config)
+webView.translatesAutoresizingMaskIntoConstraints = false
+webView.isOpaque = false
+webView.backgroundColor = bg
+webView.scrollView.backgroundColor = bg
+webView.scrollView.isScrollEnabled = false
+webView.scrollView.bounces = false
+webView.scrollView.panGestureRecognizer.isEnabled = false
+webView.scrollView.pinchGestureRecognizer?.isEnabled = false
+webView.scrollView.contentInsetAdjustmentBehavior = .never
+webView.scrollView.delegate = self
+webView.allowsLinkPreview = false
+webView.isMultipleTouchEnabled = true
+webView.navigationDelegate = self
+view.addSubview(webView)
+NSLayoutConstraint.activate([
+webView.topAnchor.constraint(equalTo: view.topAnchor),
+webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+webView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+])
+if let indexURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebBundle") {
+webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+} else if let rootURL = Bundle.main.url(forResource: "index", withExtension: "html") {
+webView.loadFileURL(rootURL, allowingReadAccessTo: rootURL.deletingLastPathComponent())
+}
+}
+func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+return nil
+}
+func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+guard message.name == "haptic", let style = message.body as? String else { return }
+switch style {
+case "light":
+UIImpactFeedbackGenerator(style: .light).impactOccurred()
+case "medium":
+UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+case "heavy":
+UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+case "success":
+UINotificationFeedbackGenerator().notificationOccurred(.success)
+case "error":
+UINotificationFeedbackGenerator().notificationOccurred(.error)
+default:
+UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+}
+}
+}
+"""
+with open(os.path.join(build_dir, "AppDelegate.swift"), "w", encoding="utf-8") as f:
+f.write(swift_host)
+if orientation_mode == "portrait":
+orientations = ["UIInterfaceOrientationPortrait"]
+elif orientation_mode == "landscape":
+orientations = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"]
+else:
+orientations = [
+"UIInterfaceOrientationPortrait",
+"UIInterfaceOrientationLandscapeLeft",
+"UIInterfaceOrientationLandscapeRight"
+]
+info_plist_dict = {
+"CFBundleDevelopmentRegion": "en",
+"CFBundleDisplayName": app_name,
+"CFBundleExecutable": target_name,
+"CFBundleIdentifier": bundle_id,
+"CFBundleInfoDictionaryVersion": "6.0",
+"CFBundleName": target_name,
+"CFBundlePackageType": "APPL",
+"CFBundleShortVersionString": "3.0.0",
+"CFBundleVersion": "3",
+"LSRequiresIPhoneOS": True,
+"CADisableMinimumFrameDurationOnPhone": True,
+"UIRequiresFullScreen": True,
+"UIStatusBarHidden": True,
+"UIViewControllerBasedStatusBarAppearance": True,
+"UILaunchScreen": {},
+"UISupportedInterfaceOrientations": orientations,
+"UISupportedInterfaceOrientations~ipad": [
+"UIInterfaceOrientationPortrait",
+"UIInterfaceOrientationPortraitUpsideDown",
+"UIInterfaceOrientationLandscapeLeft",
+"UIInterfaceOrientationLandscapeRight"
+]
+}
+with open(os.path.join(build_dir, "Info.plist"), "wb") as f:
+plistlib.dump(info_plist_dict, f)
+iconset_dir = os.path.join(build_dir, "Assets.xcassets", "AppIcon.appiconset")
+os.makedirs(iconset_dir, exist_ok=True)
+with open(os.path.join(build_dir, "Assets.xcassets", "Contents.json"), "w") as f:
+json.dump({"info": {"author": "xcode", "version": 1}}, f)
+icon_entries = [
+("Icon-120.png", 120, "iphone", "60x60", "2x"),
+("Icon-180.png", 180, "iphone", "60x60", "3x"),
+("Icon-152.png", 152, "ipad", "76x76", "2x"),
+("Icon-167.png", 167, "ipad", "83.5x83.5", "2x"),
+("Icon-1024.png", 1024, "ios-marketing", "1024x1024", "1x")
+]
+images_meta = [
+{"filename": fn, "idiom": idiom, "scale": sc, "size": sz}
+for fn, _, idiom, sz, sc in icon_entries
+]
+with open(os.path.join(iconset_dir, "Contents.json"), "w") as f:
+json.dump({"images": images_meta, "info": {"author": "xcode", "version": 1}}, f, indent=2)
+def write_cyber_icon_png(path, w=256, h=256):
+raw_rows = []
+for y in range(h):
+ny = y / h
+br, bg, bb = int(10 + 38 * ny), int(6 + 14 * ny), int(28 + 60 * ny)
+row = bytearray([0])
+for x in range(w):
+nx = x / w
+r, g, b = br, bg, bb
+dx_s, dy_s = nx - 0.5, ny - 0.68
+if dx_sdx_s + dy_sdy_s < 0.075 and int(y) % 8 not in (0, 1):
+r, g, b = 244, max(0, min(255, 63 + int((0.68 - ny) * 400))), 140
+if 0.68 <= nx <= 0.86 and (ny < 0.28 or ny > 0.64):
+r, g, b = (110, 231, 183) if (nx < 0.705 or nx > 0.835 or (0.25 < ny < 0.28) or (0.64 < ny < 0.67)) else (16, 185, 129)
+bx, by = (nx - 0.38) / 0.17, (ny - 0.46) / 0.13
+if bxbx + byby <= 1.0:
+r, g, b = (103, 232, 249) if (bxbx + byby > 0.78) else (34, 211, 238)
+wx, wy = (nx - 0.33) / 0.10, (ny - 0.48) / 0.075
+if wxwx + wywy <= 1.0:
+r, g, b = 232, 121, 249
+if 0.53 <= nx <= 0.63 and abs(ny - 0.46) < (0.63 - nx) * 0.45:
+r, g, b = 250, 204, 21
+ex, ey = nx - 0.45, ny - 0.42
+if exex + eyey <= 0.0012:
+r, g, b = (9, 13, 22) if (exex + eyey <= 0.00035) else (255, 255, 255)
+row.extend((r, g, b))
+raw_rows.append(bytes(row))
+raw_data = b"".join(raw_rows)
+def chunk(tag, data):
+return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+png = (
+b"\x89PNG\r\n\x1a\n"
++ chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
++ chunk(b"IDAT", zlib.compress(raw_data, 6))
++ chunk(b"IEND", b"")
+)
+with open(path, "wb") as pf:
+pf.write(png)
+master_icon = os.path.join(build_dir, "MasterIcon.png")
+if user_icon_file and os.path.exists(user_icon_file):
+shutil.copy2(user_icon_file, master_icon)
+if shutil.which("sips"):
+jpg_tmp = os.path.join(build_dir, "MasterIcon.jpg")
+subprocess.run(["sips", "-s", "format", "jpeg", master_icon, "--out", jpg_tmp], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+if os.path.exists(jpg_tmp):
+subprocess.run(["sips", "-s", "format", "png", jpg_tmp, "--out", master_icon], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+os.remove(jpg_tmp)
+else:
+write_cyber_icon_png(master_icon, 256, 256)
+for fn, px, _, _, _ in icon_entries:
+out_icon = os.path.join(iconset_dir, fn)
+if shutil.which("sips"):
+subprocess.run(["sips", "-s", "format", "png", "-z", str(px), str(px), master_icon, "--out", out_icon], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+if not os.path.exists(out_icon):
+shutil.copy2(master_icon, out_icon)
+if os.path.exists(master_icon):
+os.remove(master_icon)
+project_spec = {
+"name": target_name,
+"options": {
+"bundleIdPrefix": "com.cyberwing",
+"deploymentTarget": {"iOS": "15.0"}
+},
+"targets": {
+target_name: {
+"type": "application",
+"platform": "iOS",
+"sources": [
+{
+"path": ".",
+"excludes": ["project.yml", "WebBundle/", "target_name.txt"]
+},
+{
+"path": "WebBundle",
+"type": "folder"
+}
+],
+"settings": {
+"base": {
+"PRODUCT_BUNDLE_IDENTIFIER": bundle_id,
+"INFOPLIST_FILE": "Info.plist",
+"ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+"SWIFT_VERSION": "5.0",
+"CODE_SIGNING_REQUIRED": "NO",
+"CODE_SIGNING_ALLOWED": "NO"
+}
+}
+}
+}
+}
+with open(os.path.join(build_dir, "project.yml"), "w", encoding="utf-8") as f:
+json.dump(project_spec, f, indent=2)
+with open(os.path.join(build_dir, "target_name.txt"), "w") as f:
+f.write(target_name)
+PYEOF
+- name: Compile ARM64 Mach-O iOS Binary & Package .IPA
+run: |
+cd _ios_build_workspace
+TARGET_NAME=$(cat target_name.txt)
+rm -f target_name.txt
+plutil -lint Info.plist
+if ! command -v xcodegen >/dev/null 2>&1; then
+brew install xcodegen
+fi
+xcodegen generate
+xcodebuild -project "{TARGET_NAME}.xcodeproj" \
+-scheme "{TARGET_NAME}" 
+-sdk iphoneos 
+-configuration Release 
+-derivedDataPath build 
+CODE_SIGN_IDENTITY="" 
+CODE_SIGNING_REQUIRED=NO 
+CODE_SIGNING_ALLOWED=NO 
+clean build
+mkdir -p ../Payload
+cp -r "build/Build/Products/Release-iphoneos/￼
+￼
+￼{TARGET_NAME}.ipa" Payload
+cp "${TARGET_NAME}.ipa" FlappyRemix.ipa
+- name: Upload Ready-to-Sideload .IPA Artifact
+uses: actions/upload-artifact@v4
+with:
+name: FlappyRemix-iOS-IPA
+path: FlappyRemix.ipa
