@@ -12,15 +12,130 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Generate Xcode Project via XcodeGen
-        working-directory: FlappyRemix_Xcode_IPA
+      - name: Generate Native iOS Swift App and Assets
+        run: |
+          mkdir -p App
+          cd App
+
+          # 1. Download game html
+          curl -sSL "https://gist.githubusercontent.com/raw/flappy_remix.html" -o index.html || cat << 'HTMLEOF' > index.html
+          <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;background:#070614;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh}canvas{width:100vw;height:100vh;display:block}</style></head><body><canvas id="c"></canvas><script>const c=document.getElementById("c"),x=c.getContext("2d");c.width=window.innerWidth;c.height=window.innerHeight;let y=c.height/2,v=0,p=[];function jump(){v=-8}window.onpointerdown=jump;window.onkeydown=jump;setInterval(()=>{p.push({x:c.width,y:Math.random()*(c.height-200)+100})},1600);function l(){v+=0.35;y+=v;x.fillStyle="#070614";x.fillRect(0,0,c.width,c.height);x.fillStyle="#22d3ee";x.beginPath();x.arc(80,y,16,0,7);x.fill();for(let i=p.length-1;i>=0;i--){p[i].x-=3;x.fillStyle="#10b981";x.fillRect(p[i].x,0,50,p[i].y-70);x.fillRect(p[i].x,p[i].y+70,50,c.height);if(p[i].x<-60)p.splice(i,1)}requestAnimationFrame(l)}l();</script></body></html>
+          HTMLEOF
+
+          # 2. Native Swift WKWebView Wrapper
+          cat << 'SWIFTEOF' > AppDelegate.swift
+          import UIKit
+          import WebKit
+
+          @main
+          class AppDelegate: UIResponder, UIApplicationDelegate {
+              var window: UIWindow?
+
+              func application(
+                  _ application: UIApplication,
+                  didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+              ) -> Bool {
+                  let window = UIWindow(frame: UIScreen.main.bounds)
+                  window.rootViewController = GameViewController()
+                  window.makeKeyAndVisible()
+                  self.window = window
+                  return true
+              }
+          }
+
+          class GameViewController: UIViewController {
+              private var webView: WKWebView!
+
+              override var prefersStatusBarHidden: Bool { true }
+              override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .top] }
+
+              override func viewDidLoad() {
+                  super.viewDidLoad()
+                  view.backgroundColor = UIColor(red: 7/255, green: 6/255, blue: 20/255, alpha: 1.0)
+                  let config = WKWebViewConfiguration()
+                  config.allowsInlineMediaPlayback = true
+                  config.mediaTypesRequiringUserActionForPlayback = []
+
+                  webView = WKWebView(frame: view.bounds, configuration: config)
+                  webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                  webView.isOpaque = false
+                  webView.scrollView.isScrollEnabled = false
+                  webView.scrollView.bounces = false
+                  view.addSubview(webView)
+
+                  if let url = Bundle.main.url(forResource: "index", withExtension: "html") {
+                      webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                  }
+              }
+          }
+          SWIFTEOF
+
+          # 3. Info.plist
+          cat << 'PLISTEOF' > Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>en</string>
+              <key>CFBundleDisplayName</key>
+              <string>Flappy Remix</string>
+              <key>CFBundleExecutable</key>
+              <string>FlappyRemix</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.cyberwing.flappyremix</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>FlappyRemix</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>UIRequiresFullScreen</key>
+              <true/>
+              <key>UIStatusBarHidden</key>
+              <true/>
+              <key>UIViewControllerBasedStatusBarAppearance</key>
+              <true/>
+          </dict>
+          </plist>
+          PLISTEOF
+
+          # 4. XcodeGen project spec
+          cat << 'PROJEOF' > project.yml
+          name: FlappyRemix
+          options:
+            bundleIdPrefix: com.cyberwing
+            deploymentTarget:
+              iOS: "15.0"
+          targets:
+            FlappyRemix:
+              type: application
+              platform: iOS
+              sources:
+                - AppDelegate.swift
+                - Info.plist
+                - index.html
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.cyberwing.flappyremix
+                  INFOPLIST_FILE: Info.plist
+                  SWIFT_VERSION: "5.0"
+                  CODE_SIGNING_REQUIRED: "NO"
+                  CODE_SIGNING_ALLOWED: "NO"
+          PROJEOF
+
+      - name: Build Xcode Project and Compile ARM64 iOS Binary
         run: |
           brew install xcodegen
+          cd App
           xcodegen generate
 
-      - name: Compile Unsigned iOS App (ARM64)
-        working-directory: FlappyRemix_Xcode_IPA
-        run: |
           xcodebuild -project FlappyRemix.xcodeproj \
             -scheme FlappyRemix \
             -sdk iphoneos \
@@ -31,15 +146,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             clean build
 
-      - name: Package Payload into FlappyRemix.ipa
-        working-directory: FlappyRemix_Xcode_IPA
+      - name: Package Mach-O Executable into FlappyRemix.ipa
         run: |
           mkdir -p Payload
-          cp -r build/Build/Products/Release-iphoneos/FlappyRemix.app Payload/
+          cp -r App/build/Build/Products/Release-iphoneos/FlappyRemix.app Payload/
           zip -r9 FlappyRemix.ipa Payload
 
-      - name: Upload Ready-to-Sideload .IPA Artifact
+      - name: Upload .IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: FlappyRemix-iOS-IPA
-          path: FlappyRemix_Xcode_IPA/FlappyRemix.ipa
+          path: FlappyRemix.ipa
