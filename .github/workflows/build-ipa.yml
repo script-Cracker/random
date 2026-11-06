@@ -1,0 +1,45 @@
+name: Build Unsigned iOS .IPA for Sideloading
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate Xcode Project via XcodeGen
+        working-directory: FlappyRemix_Xcode_IPA
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compile Unsigned iOS App (ARM64)
+        working-directory: FlappyRemix_Xcode_IPA
+        run: |
+          xcodebuild -project FlappyRemix.xcodeproj \
+            -scheme FlappyRemix \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Package Payload into FlappyRemix.ipa
+        working-directory: FlappyRemix_Xcode_IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/FlappyRemix.app Payload/
+          zip -r9 FlappyRemix.ipa Payload
+
+      - name: Upload Ready-to-Sideload .IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlappyRemix-iOS-IPA
+          path: FlappyRemix_Xcode_IPA/FlappyRemix.ipa
