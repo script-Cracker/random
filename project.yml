@@ -1,0 +1,23 @@
+name: FlappyRemix
+options:
+  bundleIdPrefix: com.cyberwing
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  FlappyRemix:
+    type: application
+    platform: iOS
+    sources:
+      - path: FlappyRemix
+        excludes:
+          - "www/**"
+      - path: FlappyRemix/www
+        type: folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cyberwing.flappyremix
+        INFOPLIST_FILE: FlappyRemix/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
