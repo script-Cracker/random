@@ -1,0 +1,157 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+
+local Positions = {
+    ["TRUCK POSITION"] = Vector3.new(-240, 8, 1482),
+    ["POLICE STATION"] = Vector3.new(289, 5, 1778)
+}
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "TeleportToggles"
+Gui.ResetOnSpawn = false
+
+pcall(function()
+    Gui.Parent = CoreGui
+end)
+
+if not Gui.Parent then
+    Gui.Parent = Player:WaitForChild("PlayerGui")
+end
+
+local Scale = Instance.new("UIScale")
+Scale.Parent = Gui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.fromOffset(240, 150)
+Frame.Position = UDim2.new(0.5, -120, 0.5, -75)
+Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+Frame.Parent = Gui
+
+Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
+
+local Padding = Instance.new("UIPadding")
+Padding.PaddingTop = UDim.new(0, 10)
+Padding.PaddingLeft = UDim.new(0, 10)
+Padding.PaddingRight = UDim.new(0, 10)
+Padding.Parent = Frame
+
+local Layout = Instance.new("UIListLayout")
+Layout.Padding = UDim.new(0, 9)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+Layout.Parent = Frame
+
+local function Resize()
+    local Camera = workspace.CurrentCamera
+    if Camera then
+        local Viewport = Camera.ViewportSize
+        Scale.Scale = math.clamp(math.min(Viewport.X / 420, Viewport.Y / 320), 0.65, 1.15)
+    end
+end
+
+Resize()
+
+local function ConnectCamera()
+    local Camera = workspace.CurrentCamera
+    if Camera then
+        Camera:GetPropertyChangedSignal("ViewportSize"):Connect(Resize)
+    end
+end
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(ConnectCamera)
+ConnectCamera()
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 25)
+Title.BackgroundTransparency = 1
+Title.Text = "TELEPORT CONTROLS"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.TextSize = 15
+Title.Font = Enum.Font.GothamBold
+Title.LayoutOrder = 1
+Title.Parent = Frame
+
+local Dragging = false
+local DragStart
+local StartPosition
+
+Title.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1
+        or Input.UserInputType == Enum.UserInputType.Touch then
+        Dragging = true
+        DragStart = Input.Position
+        StartPosition = Frame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(Input)
+    if Dragging and (
+        Input.UserInputType == Enum.UserInputType.MouseMovement
+        or Input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local Delta = Input.Position - DragStart
+        Frame.Position = UDim2.new(
+            StartPosition.X.Scale,
+            StartPosition.X.Offset + Delta.X,
+            StartPosition.Y.Scale,
+            StartPosition.Y.Offset + Delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1
+        or Input.UserInputType == Enum.UserInputType.Touch then
+        Dragging = false
+    end
+end)
+
+local Connections = {}
+
+local function CreateToggle(Name, Position, Order)
+    local Enabled = false
+
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(1, 0, 0, 40)
+    Button.BackgroundColor3 = Color3.fromRGB(190, 45, 45)
+    Button.Text = Name .. " : OFF"
+    Button.TextColor3 = Color3.new(1, 1, 1)
+    Button.TextSize = 13
+    Button.Font = Enum.Font.GothamBold
+    Button.LayoutOrder = Order
+    Button.Parent = Frame
+
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 7)
+
+    Button.MouseButton1Click:Connect(function()
+        Enabled = not Enabled
+
+        Button.BackgroundColor3 = Enabled
+            and Color3.fromRGB(35, 175, 75)
+            or Color3.fromRGB(190, 45, 45)
+
+        Button.Text = Name .. (Enabled and " : ON" or " : OFF")
+
+        if Enabled then
+            Connections[Name] = RunService.Heartbeat:Connect(function()
+                local Character = Player.Character
+                local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if Root then
+                    Root.CFrame = CFrame.new(Position)
+                end
+            end)
+        else
+            if Connections[Name] then
+                Connections[Name]:Disconnect()
+                Connections[Name] = nil
+            end
+        end
+    end)
+end
+
+CreateToggle("TRUCK POSITION", Positions["TRUCK POSITION"], 2)
+CreateToggle("POLICE STATION", Positions["POLICE STATION"], 3)
